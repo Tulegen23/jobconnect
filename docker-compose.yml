@@ -1,0 +1,79 @@
+services:
+  mongo:
+    image: mongo:7
+    container_name: jobconnect-mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - jobconnect-network
+
+  mongo-express:
+    image: mongo-express:latest
+    container_name: jobconnect-mongo-express
+    ports:
+      - "8081:8081"
+    environment:
+      ME_CONFIG_MONGODB_URL: mongodb://mongo:27017/
+      ME_CONFIG_BASICAUTH_USERNAME: admin
+      ME_CONFIG_BASICAUTH_PASSWORD: admin
+    depends_on:
+      - mongo
+    networks:
+      - jobconnect-network
+
+  api:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: jobconnect-api
+    ports:
+      - "4000:4000"
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      MONGO_URI: mongodb://mongo:27017/jobconnect
+      JWT_SECRET: your-super-secret-jwt-key-change-in-production
+      JWT_EXPIRES_IN: 7d
+      WS_PORT: 4001
+    depends_on:
+      mongo:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:4000/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - jobconnect-network
+
+  client:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+      args:
+        - NEXT_PUBLIC_GRAPHQL_URL=http://localhost:4000/graphql
+        - NEXT_PUBLIC_WS_URL=ws://localhost:4000/graphql
+    container_name: jobconnect-client
+    ports:
+      - "3000:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - jobconnect-network
+
+volumes:
+  mongo-data:
+
+networks:
+    jobconnect-network:
+      driver: bridge
+
